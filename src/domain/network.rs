@@ -9,7 +9,7 @@ use super::{
 };
 
 #[derive(Hash, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NodeId(usize);
+pub struct NodeId(pub usize);
 
 impl NodeId {
     pub const MAX: NodeId = NodeId(usize::MAX);

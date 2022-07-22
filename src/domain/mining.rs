@@ -1,53 +1,98 @@
 use std::iter::once;
 
-use futures::stream::FuturesUnordered;
+use futures::{stream::FuturesUnordered, StreamExt};
 
-use anyhow::bail;
-use sha2::{Sha256, Digest};
+use anyhow::{bail, Result};
+use log::debug;
+use sha2::{Digest, Sha256};
 
-use super::{blockchain::{Block, BlockHeader, Nonce, MAX_TRANSACTION_COUNT}, transaction::ProvenTransaction, network::NodeId, serialization::serialize};
+use super::{
+    blockchain::{BlockHeader, BlocksTransactions, Nonce, MAX_TRANSACTION_COUNT},
+    network::NodeId,
+    serialization::serialize,
+    transaction::ProvenTransaction,
+};
 
-pub async fn try_mine_any(difficulty: u8, miner: &NodeId, header: &BlockHeader, transactions: &Vec<ProvenTransaction>) -> Result<Nonce> {
-    let mut split_pull = Vec::with_capacity(transactions.len() / MAX_TRANSACTION_COUNT);
+pub async fn try_mine_any(difficulty: u8, transactions: &Vec<ProvenTransaction>) -> Result<Nonce> {
+    let mut split_pull: Vec<Vec<&ProvenTransaction>> =
+        Vec::with_capacity(transactions.len() / MAX_TRANSACTION_COUNT);
     for i in (0..transactions.len()).step_by(10) {
-        split_pull.push(&transactions[i..(i+MAX_TRANSACTION_COUNT).min(transactions.len())]);
+        split_pull.push(
+            transactions
+                .iter()
+                .skip(i)
+                .take(MAX_TRANSACTION_COUNT)
+                .collect(),
+        );
     }
-    let tasks: FuturesUnordered<_> = split_pull
+    let mut tasks: FuturesUnordered<_> = split_pull
         .into_iter()
-        .map(|ts| mine(miner, header, ts, difficulty))
+        .map(|ts| mine(ts, difficulty))
         .collect();
-    tasks
-        .into_iter()
-        .filter_map(|x| x.await.ok())
-        .next()
-        .ok_or(anyhow!("Didn't find any block with given transactions."))
+    if let Some(Ok(nonce)) = tasks.next().await {
+        Ok(nonce)
+    } else {
+        bail!("No nonce could create block with given set of transactions")
+    }
 }
 
-async fn mine(miner: &NodeId, header: &BlockHeader, transactions: &[ProvenTransaction], difficulty: u8) -> Result<Nonce> {
-    let mut bytes = serialize(miner)?;
-    bytes.extend_from_slice(&serialize(header))?;
-    bytes.extend_from_slice(&serialize(transactions))?;
-    bytes.extend_from_slice(&serialize(&difficulty))?;
-    let mut sha256 = Sha256::new();
-    tokio::task::spawn(move || {
-        for nonce in 0..usize::MAX {
-            sha256.chain_update(once(&bytes).chain(once(nonce.to_ne_bytes())));
-            let result = sha256.finalize();
-            if result[0..difficulty as usize].iter().all(|&b| b == b'0') {
-                return Ok(nonce)
-            }
-        }
-        bail!("No nonce found.")
+async fn mine(transactions: Vec<&ProvenTransaction>, difficulty: u8) -> Result<Nonce> {
+    let block_data = serialize(&transactions)?;
+    tokio::task::spawn(async move {
+        (0..u32::MAX)
+            .map(|n| (n, hash_block(&block_data, n)))
+            .find(|(_n, hash)| hash[..difficulty as usize].iter().all(|&b| b == b'0'))
+            .map(|(n, _hash)| Nonce(n as u8))
+            .ok_or(bail!("No nonce found."))
     })
-    .await
+    .await?
+}
+
+fn hash_block(block_data: &[u8], nonce: u32) -> Vec<u8> {
+    let mut sha256 = Sha256::new();
+    sha256.update(block_data);
+    sha256.update(nonce.to_ne_bytes());
+    sha256.finalize().to_vec()
 }
 
 #[cfg(test)]
 mod tests {
+    use rand::{Rng, SeedableRng};
+
+    use crate::domain::{
+        blockchain::NoCoin,
+        rsa_verification::{encode_message, generate_key, RSAEncodedMsg},
+        transaction::{AffordableTransaction, Transaction},
+    };
+
     use super::*;
 
+    fn some_transactions() -> Vec<ProvenTransaction> {
+        let mut seed = [0; 32];
+        let key = generate_key().unwrap();
+
+        seed[0] = 1;
+        seed[1] = 0xA;
+        seed[2] = 0xC;
+        let mut rng = rand::prelude::StdRng::from_seed(seed);
+        (0..rng.gen_range(1..=10))
+            .map(|_| ProvenTransaction {
+                proof: encode_message(&vec![rng.gen(), rng.gen()], &key).unwrap(),
+                transaction: AffordableTransaction(Transaction::new(
+                    Some(NodeId(rng.gen())),
+                    NodeId(rng.gen()),
+                    NoCoin(rng.gen()),
+                    NoCoin(rng.gen()),
+                )),
+            })
+            .collect()
+    }
+
     #[tokio::test]
-    async fn test_difficulty() {
-        
+    async fn impossible_difficulty() {
+        let transactions = BlocksTransactions(some_transactions());
+        let mine_result = mine(transactions.0.iter().collect(), 3).await;
+
+        assert!(mine_result.is_err())
     }
 }

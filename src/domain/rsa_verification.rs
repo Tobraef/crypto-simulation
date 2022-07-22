@@ -1,6 +1,8 @@
 use anyhow::{bail, Result};
 use rsa::{PaddingScheme, PublicKey};
+use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize)]
 pub struct RSAEncodedMsg(Vec<u8>);
 pub struct PubKey(rsa::RsaPublicKey);
 pub struct PrivKey(rsa::RsaPrivateKey);
@@ -24,7 +26,7 @@ pub fn encode_message(serialized_data: &[u8], private_key: &PrivKey) -> Result<R
     } else {
         private_key
             .0
-            .sign(PaddingScheme::PKCS1v15Encrypt, serialized_data)
+            .sign(PaddingScheme::new_pkcs1v15_sign(None), serialized_data)
             .map(|bytes| RSAEncodedMsg(bytes))
             .map_err(|e| e.into())
     }

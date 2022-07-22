@@ -29,13 +29,15 @@ impl AddAssign for NoCoin {
     }
 }
 
-pub struct BlockHash(pub [u8; 64]);
+#[derive(Serialize, Deserialize)]
+pub struct BlockHash(pub Vec<u8>);
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BlockIndex(pub usize);
 
 pub struct Nonce(pub u8);
 
+#[derive(Serialize, Deserialize)]
 pub struct BlockHeader {
     pub index: BlockIndex,
     pub prev_hash: BlockHash,
@@ -44,10 +46,13 @@ pub struct BlockHeader {
     pub difficulty: u8,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct BlocksTransactions(pub Vec<ProvenTransaction>);
+
 pub struct Block {
     pub header: BlockHeader,
     pub mined_by: NodeId,
-    pub transactions: Vec<ProvenTransaction>,
+    pub transactions: BlocksTransactions,
     pub nonce: usize,
 }
 

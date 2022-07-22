@@ -16,7 +16,11 @@ pub struct Transaction {
     pub fee: NoCoin,
     pub ammount: NoCoin,
 }
+
+#[derive(Serialize, Deserialize)]
 pub struct AffordableTransaction(pub Transaction);
+
+#[derive(Serialize, Deserialize)]
 pub struct ProvenTransaction {
     pub transaction: AffordableTransaction,
     pub proof: RSAEncodedMsg,

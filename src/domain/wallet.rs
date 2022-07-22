@@ -10,7 +10,7 @@ pub fn calculate_all_wallets(blockchain: &Blockchain) -> HashMap<NodeId, NoCoin>
     let mut result = HashMap::new();
     for block in blockchain.0.iter() {
         *result.entry(block.mined_by.clone()).or_insert(NoCoin(0.)) += mining_fees_gain(block);
-        for proven_transaction in block.transactions.iter() {
+        for proven_transaction in block.transactions.0.iter() {
             let transaction = &proven_transaction.transaction.0;
             if let Some(from) = transaction.from.as_ref() {
                 *result.entry(from.clone()).or_insert(NoCoin(0.)) +=
@@ -32,6 +32,7 @@ fn mining_fees_gain(block: &Block) -> NoCoin {
     NoCoin(
         block
             .transactions
+            .0
             .iter()
             .map(|t| t.transaction.0.fee.0)
             .sum(),
@@ -52,7 +53,7 @@ fn transactions_gain_for(id: &NodeId, blockchain: &Blockchain) -> NoCoin {
     blockchain
         .0
         .iter()
-        .flat_map(|c| c.transactions.iter())
+        .flat_map(|c| c.transactions.0.iter())
         .fold(NoCoin(0.), |acc, t| {
             acc + balance_after_transaction(id, &t.transaction.0)
         })
