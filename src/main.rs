@@ -1,5 +1,6 @@
+mod AI;
 mod domain;
-mod server;
+mod web;
 
 #[tokio::main]
 async fn main() {}

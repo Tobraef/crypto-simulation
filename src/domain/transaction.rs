@@ -20,7 +20,7 @@ pub struct Transaction {
 #[derive(Serialize, Deserialize)]
 pub struct AffordableTransaction(pub Transaction);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ProvenTransaction {
     pub transaction: AffordableTransaction,
     pub proof: RSAEncodedMsg,
