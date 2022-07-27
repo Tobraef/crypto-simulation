@@ -51,7 +51,7 @@ pub const ROUTES: Routes = Routes {
     get_chain: "get_chain",
     new_transaction: "new_transaction",
     acknowledge_new_node: "acknowledge_new_node",
-    register: "register:," 
+    register: "register:,",
 };
 
 #[route("new_block", method = "POST")]

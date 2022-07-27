@@ -4,37 +4,36 @@ use anyhow::{anyhow, bail, Result};
 use futures::{stream::FuturesUnordered, StreamExt};
 use log::info;
 
-use crate::domain::{Node, PubKey, User, Blockchain};
+use crate::domain::{Blockchain, Node, PubKey, User};
 
 use super::server::ROUTES;
 
 mod toolkit {
+    use anyhow::Result;
     use log::info;
     use serde::Deserialize;
-    use anyhow::Result;
-    use std::net::SocketAddr; 
+    use std::net::SocketAddr;
 
     async fn get_req(url: String) -> Result<String> {
-        let response = reqwest::get(url)
-            .await?
-            .text()
-            .await?;
+        let response = reqwest::get(url).await?.text().await?;
         Ok(response)
     }
-    
+
     fn map_resp<'a, T>(response: String) -> Result<T>
-        where T: Deserialize<'a>
+    where
+        T: Deserialize<'a>,
     {
         let mapped = serde_json::from_str(&response)?;
         Ok(mapped)
     }
-    
+
     fn url_for(addr: &SocketAddr, endpoint: &'static str) -> String {
         format!("http://{}/{}", addr.to_string(), endpoint)
     }
-    
+
     pub async fn get_data<'a, T>(addr: &SocketAddr, endpoint: &'static str) -> Result<T>
-        where T: Deserialize<'a>
+    where
+        T: Deserialize<'a>,
     {
         info!("Reaching endpoint: {}", endpoint);
         let url = url_for(addr, endpoint);

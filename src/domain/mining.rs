@@ -4,6 +4,7 @@ use futures::{stream::FuturesUnordered, StreamExt};
 
 use anyhow::{bail, Result};
 use log::debug;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
@@ -13,7 +14,31 @@ use super::{
     transaction::ProvenTransaction,
 };
 
-pub async fn try_mine_any(difficulty: u8, transactions: &Vec<ProvenTransaction>) -> Result<Nonce> {
+const HASH_LEN: usize = 64;
+
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct BlockHash(pub String);
+
+impl Default for BlockHash {
+    fn default() -> Self {
+        Self("0".repeat(HASH_LEN))
+    }
+}
+
+impl BlockHash {
+    pub fn try_new(bytes: String) -> Result<Self> {
+        if bytes.len() != HASH_LEN {
+            bail!("Hash must be {} bits long", HASH_LEN)
+        } else {
+            Ok(Self(bytes))
+        }
+    }
+}
+
+pub async fn try_mine_any_async(
+    difficulty: u8,
+    transactions: &Vec<ProvenTransaction>,
+) -> Result<(BlockHash, Nonce)> {
     let mut split_pull: Vec<Vec<&ProvenTransaction>> =
         Vec::with_capacity(transactions.len() / MAX_TRANSACTION_COUNT);
     for i in (0..transactions.len()).step_by(10) {
@@ -27,7 +52,7 @@ pub async fn try_mine_any(difficulty: u8, transactions: &Vec<ProvenTransaction>)
     }
     let mut tasks: FuturesUnordered<_> = split_pull
         .into_iter()
-        .map(|ts| mine(ts, difficulty))
+        .map(|ts| mine_async(ts, difficulty))
         .collect();
     if let Some(Ok(nonce)) = tasks.next().await {
         Ok(nonce)
@@ -36,16 +61,42 @@ pub async fn try_mine_any(difficulty: u8, transactions: &Vec<ProvenTransaction>)
     }
 }
 
-async fn mine(transactions: Vec<&ProvenTransaction>, difficulty: u8) -> Result<Nonce> {
+pub fn try_mine_any(
+    difficulty: u8,
+    transactions: &Vec<ProvenTransaction>,
+) -> Result<(BlockHash, Nonce)> {
+    todo!("Should be possible, when transactions are empty");
+    for i in (0..transactions.len()).step_by(MAX_TRANSACTION_COUNT) {
+        let transactions = &transactions[i..transactions.len().min(i + MAX_TRANSACTION_COUNT)];
+        if let Ok(r) = mine(transactions, difficulty) {
+            return Ok(r);
+        }
+    }
+    bail!("No nonce found.")
+}
+
+async fn mine_async(
+    transactions: Vec<&ProvenTransaction>,
+    difficulty: u8,
+) -> Result<(BlockHash, Nonce)> {
     let block_data = serialize(&transactions)?;
     tokio::task::spawn(async move {
         (0..u32::MAX)
             .map(|n| (Nonce(n), hash_block(&block_data, Nonce(n))))
             .find(|(_n, hash)| hash_matches(hash, difficulty))
-            .map(|(n, _hash)| n)
+            .map(|(n, hash)| (BlockHash(hash), n))
             .ok_or(anyhow::anyhow!("No nonce found."))
     })
     .await?
+}
+
+fn mine(transactions: &[ProvenTransaction], difficulty: u8) -> Result<(BlockHash, Nonce)> {
+    let block_data = serialize(&transactions)?;
+    (0..u32::MAX)
+        .map(|n| (Nonce(n), hash_block(&block_data, Nonce(n))))
+        .find(|(_n, hash)| hash_matches(hash, difficulty))
+        .map(|(n, hash)| (BlockHash(hash), n))
+        .ok_or(anyhow::anyhow!("No nonce found."))
 }
 
 fn hash_matches(hash: &str, difficulty: u8) -> bool {
@@ -111,7 +162,7 @@ mod tests {
         let transactions = BlocksTransactions(some_transactions());
 
         for dif in 1..4 {
-            let nonce = mine(transactions.0.iter().collect(), dif as u8)
+            let (_, nonce) = mine_async(transactions.0.iter().collect(), dif as u8)
                 .await
                 .unwrap();
 
@@ -134,7 +185,7 @@ mod tests {
         let transactions = some_transactions();
         let difficulty = 3;
 
-        let nonce = mine(transactions.iter().collect(), difficulty)
+        let (_, nonce) = mine_async(transactions.iter().collect(), difficulty)
             .await
             .unwrap();
         let proof = prove_mined_block(&transactions, difficulty, nonce);

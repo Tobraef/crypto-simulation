@@ -5,7 +5,7 @@ use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    blockchain::{Blockchain, NoCoin, verify_blockchain},
+    blockchain::{verify_blockchain, Blockchain, NoCoin},
     mining::prove_mined_block,
     rsa_verification::{generate_key, PrivKey, PubKey},
     transaction::{verify_transaction, ProvenTransaction},
