@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use super::{
     blockchain::NoCoin,
     network::{Network, Node, NodeId, User},
@@ -9,7 +11,7 @@ use super::{
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Transaction {
     pub from: Option<NodeId>,
     pub to: NodeId,
@@ -17,10 +19,10 @@ pub struct Transaction {
     pub ammount: NoCoin,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AffordableTransaction(pub Transaction);
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProvenTransaction {
     pub transaction: AffordableTransaction,
     pub proof: RSAEncodedMsg,

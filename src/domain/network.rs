@@ -1,11 +1,11 @@
 use std::{collections::HashMap, net::SocketAddr};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Result, anyhow};
 
 use serde::{Deserialize, Serialize};
 
 use super::{
-    blockchain::{verify_blockchain, Blockchain, NoCoin},
+    blockchain::{genesis_block, verify_blockchain, Blockchain, NoCoin},
     mining::prove_mined_block,
     rsa_verification::{generate_key, PrivKey, PubKey},
     transaction::{verify_transaction, ProvenTransaction},
@@ -32,6 +32,7 @@ pub struct Network {
     pub blockchain: Blockchain,
     pub transactions_poll: Vec<ProvenTransaction>,
     pub cache: Cache,
+    void: (),
 }
 
 pub struct Cache {
@@ -99,12 +100,6 @@ fn new_user(addr: SocketAddr) -> Result<User> {
     })
 }
 
-pub fn try_adopt_blockchain(network: &mut Network, blockchain: Blockchain) -> Result<()> {
-    let blockchain = verify_blockchain(blockchain)?;
-    network.blockchain = blockchain;
-    Ok(())
-}
-
 pub fn try_start_new_network(addr: SocketAddr) -> Result<Network> {
     Ok(Network {
         user: new_user(addr)?,
@@ -114,5 +109,45 @@ pub fn try_start_new_network(addr: SocketAddr) -> Result<Network> {
         cache: Cache {
             wallet: HashMap::new(),
         },
+        void: (),
     })
+}
+
+pub fn try_adopt_network(
+    addr: SocketAddr,
+    nodes: Vec<Node>,
+    chain: Blockchain,
+) -> Result<Network> {
+    let chain = verify_blockchain(chain)?;
+    Ok(Network {
+        user: new_user(addr)?,
+        nodes,
+        blockchain: chain,
+        transactions_poll: vec![],
+        cache: Cache {
+            wallet: HashMap::new(),
+        },
+        void: (),
+    })
+}
+
+pub fn try_adopt_pending_transactions(network: &mut Network, transactions: Vec<(Transaction, Vec<u8>)>) -> Result<()> {
+    let verification_results: Vec<_> = transactions
+        .into_iter()
+        .map(|(transaction, proof)| verify_transaction(network, transaction, proof))
+        .collect();
+    if verification_results.iter().any(|r| r.is_err()) {
+        let error_text = verification_results
+            .into_iter()
+            .filter_map(|v| v.err().map(|e| e.to_string()))
+            .fold(String::default(), |e1, e2| format!("{e1}\n{e2}"));
+        bail!(error_text)
+    } else {
+        let verified_transactions = verification_results
+            .into_iter()
+            .filter_map(|f| f.ok())
+            .collect();
+        network.transactions_poll = verified_transactions;
+        Ok(())
+    }
 }

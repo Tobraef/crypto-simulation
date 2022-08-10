@@ -65,7 +65,9 @@ pub fn try_mine_any(
     difficulty: u8,
     transactions: &Vec<ProvenTransaction>,
 ) -> Result<(BlockHash, Nonce)> {
-    todo!("Should be possible, when transactions are empty");
+    if transactions.is_empty() {
+        return mine(&transactions, difficulty);
+    }
     for i in (0..transactions.len()).step_by(MAX_TRANSACTION_COUNT) {
         let transactions = &transactions[i..transactions.len().min(i + MAX_TRANSACTION_COUNT)];
         if let Ok(r) = mine(transactions, difficulty) {

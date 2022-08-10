@@ -3,7 +3,7 @@ use std::ops::{Add, AddAssign, Sub};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    mining::{prove_mined_block, try_mine_any, try_mine_any_async, BlockHash},
+    mining::{prove_mined_block, try_mine_any, BlockHash},
     network::NodeId,
     transaction::ProvenTransaction,
 };
@@ -64,7 +64,7 @@ pub struct Block {
 
 //Should be VerifiedBlockchain some day.
 //Currently get_chain is received with 'validated' transactions which doesn't have to be true
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Blockchain(pub Vec<Block>);
 
 pub fn genesis_block() -> Block {

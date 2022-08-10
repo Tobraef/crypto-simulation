@@ -2,34 +2,46 @@ use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::{anyhow, Result};
 
+use log::info;
 use tokio::{sync::Mutex, try_join};
 
 use crate::{
-    domain::{try_adopt_blockchain, try_adopt_network, try_start_new_network, Network},
-    web::{get_chain, register_node, run},
+    domain::{try_adopt_network, try_start_new_network, Network, User, try_adopt_pending_transactions},
+    web::{get_chain, register_node, run, get_pending_transactions},
 };
 
-async fn initialize_network(network: Arc<Mutex<Network>>) -> Result<()> {
-    let mut network = network.lock().await;
-    match register_node(&network.user).await {
+async fn initialize_network(addr: SocketAddr) -> Result<Network> {
+    match register_node(&addr).await {
         Ok(nodes) => {
+            info!(
+                "Node succesfully registered. Received {} nodes.",
+                nodes.len()
+            );
             let node_to_talk = nodes
                 .first()
                 .ok_or(anyhow!("Received empty nodes from register"))?;
             let blockchain = get_chain(node_to_talk).await?;
-            try_adopt_blockchain(&mut network, blockchain)?;
-            network.nodes = nodes;
+            info!("Received blockchain: {:?}", blockchain);
+            let mut network = try_adopt_network(addr, nodes, blockchain)?;
+            let transactions = get_pending_transactions(network.nodes.first().unwrap()).await?;
+            info!("Received pending transactions: {:?}", transactions);
+            try_adopt_pending_transactions(&mut network, transactions)?;
+            Ok(network)
         }
-        Err(_) => todo!(),
+        Err(e) => {
+            info!(
+                "Couldn't register node, starting own network. Error from registering: {}",
+                e
+            );
+            try_start_new_network(addr)
+        }
     }
 }
 
 pub async fn start(addr: SocketAddr) -> Result<()> {
-    let network = try_start_new_network(addr.clone())?;
-    let network = Arc::new(Mutex::new(network));
+    let network  = Arc::new(Mutex::new(initialize_network(addr).await?));
 
     let run_server = run(addr, network.clone());
-    let initialize_network = initialize_network(network.clone());
 
-    try_join!(run_server, initialize_network).map(|_| ())
+    run_server.await
 }

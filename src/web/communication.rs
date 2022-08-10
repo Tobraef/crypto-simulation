@@ -4,14 +4,14 @@ use anyhow::{anyhow, bail, Result};
 use futures::{stream::FuturesUnordered, StreamExt};
 use log::info;
 
-use crate::domain::{Blockchain, Node, PubKey, User};
+use crate::domain::{Blockchain, Node, PubKey, User, Transaction};
 
 use super::server::ROUTES;
 
 mod toolkit {
     use anyhow::Result;
     use log::info;
-    use serde::Deserialize;
+    use serde::{Deserialize, de::DeserializeOwned};
     use std::net::SocketAddr;
 
     async fn get_req(url: String) -> Result<String> {
@@ -19,21 +19,21 @@ mod toolkit {
         Ok(response)
     }
 
-    fn map_resp<'a, T>(response: String) -> Result<T>
+    fn map_resp<T>(response: String) -> Result<T>
     where
-        T: Deserialize<'a>,
+        T: DeserializeOwned,
     {
         let mapped = serde_json::from_str(&response)?;
         Ok(mapped)
     }
 
-    fn url_for(addr: &SocketAddr, endpoint: &'static str) -> String {
+    pub(super) fn url_for(addr: &SocketAddr, endpoint: &'static str) -> String {
         format!("http://{}/{}", addr.to_string(), endpoint)
     }
 
-    pub async fn get_data<'a, T>(addr: &SocketAddr, endpoint: &'static str) -> Result<T>
+    pub(super) async fn get_data<T>(addr: &SocketAddr, endpoint: &'static str) -> Result<T>
     where
-        T: Deserialize<'a>,
+        T: DeserializeOwned,
     {
         info!("Reaching endpoint: {}", endpoint);
         let url = url_for(addr, endpoint);
@@ -79,7 +79,7 @@ pub async fn send_acknowledge_new_node(
         .filter(|n| n.id != node.id)
         .map(|n| {
             client
-                .post(url_for(&node.addr, ROUTES.acknowledge_new_node))
+                .post(toolkit::url_for(&node.addr, ROUTES.acknowledge_new_node))
                 .body(node_json.clone())
                 .send()
         })
@@ -96,13 +96,17 @@ fn address_of_previous_node(addr: &SocketAddr) -> SocketAddr {
     copy
 }
 
-pub async fn register_node(user: &User) -> Result<Vec<Node>> {
-    let register_address = address_of_previous_node(&user.node.addr);
+pub async fn register_node(addr: &SocketAddr) -> Result<Vec<Node>> {
+    let register_address = address_of_previous_node(addr);
     toolkit::get_data(&register_address, ROUTES.register).await
 }
 
 pub async fn get_chain(node: &Node) -> Result<Blockchain> {
     toolkit::get_data(&node.addr, ROUTES.get_chain).await
+}
+
+pub async fn get_pending_transactions(node: &Node) -> Result<Vec<(Transaction, Vec<u8>)>> {
+    toolkit::get_data(&node.addr, ROUTES.get_pending_transactions).await
 }
 
 #[cfg(test)]

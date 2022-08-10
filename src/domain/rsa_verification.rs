@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use anyhow::{bail, Result};
 use rsa::{
     pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey},
@@ -13,6 +15,12 @@ pub struct PrivKey(rsa::RsaPrivateKey);
 
 const PRIVATE_KEY_LEN: usize = 1024;
 const RSA_MESSAGE_LEN: usize = 117;
+
+impl Debug for RSAEncodedMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&String::from_utf8_lossy(&self.0))
+    }
+}
 
 struct KeyVisitor;
 impl<'de> Visitor<'de> for KeyVisitor {

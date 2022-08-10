@@ -14,6 +14,6 @@ pub use rsa_verification::{PubKey, RSAEncodedMsg};
 pub use transaction::Transaction;
 
 pub use network::{
-    acknowledge_node, try_add_block, try_add_transaction, try_adopt_blockchain, try_create_node,
-    try_start_new_network,
+    acknowledge_node, try_add_block, try_add_transaction, try_adopt_network, try_create_node,
+    try_start_new_network, try_adopt_pending_transactions,
 };
