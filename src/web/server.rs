@@ -45,8 +45,6 @@ pub struct Routes {
     pub get_pending_transactions: &'static str,
 }
 
-const NEW_BLOCK: &str = "new_block";
-
 pub const ROUTES: Routes = Routes {
     new_block: "new_block",
     get_chain: "get_chain",
@@ -126,6 +124,9 @@ pub async fn run(addr: SocketAddr, network: Arc<Mutex<DomainNetwork>>) -> anyhow
             .service(new_transaction)
             .service(register)
             .service(acknowledge_new_node)
+            .service(self::new_block)
+            .service(self::get_chain)
+            .service(self::get_pending_transactions)
             .wrap(middleware::Logger::default())
     })
     .bind(addr)?
