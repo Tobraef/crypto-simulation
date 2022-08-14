@@ -1,10 +1,12 @@
+use log::{debug, info};
+use serde::Deserialize;
 use std::{fmt::Display, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
 use actix_web::{
-    middleware, route,
+    get, middleware, route,
     web::{self, Data},
-    HttpRequest, HttpResponse, Responder, get,
+    HttpRequest, HttpResponse, Responder,
 };
 
 use anyhow::anyhow;
@@ -97,19 +99,18 @@ async fn acknowledge_new_node(
     Ok(HttpResponse::Ok())
 }
 
-#[route("register", method = "GET")]
+#[route("register", method = "POST")]
 async fn register(
-    req: HttpRequest,
     key: web::Json<PubKey>,
     network: SNetwork,
     client: Data<reqwest::Client>,
 ) -> Result<impl Responder, ErrResponse> {
     let mut network = network.lock().await;
-    let address = req
-        .peer_addr()
-        .ok_or(anyhow!("Couldn't get address from the request. Rejected."))?;
-    let node = try_create_node(&mut network, address, key.0)?;
-    send_acknowledge_new_node(client.as_ref(), &node.clone(), &network.nodes).await?;
+    let address = SocketAddr::from(([127, 0, 0, 1], 8101));
+    let node = try_create_node(&mut network, address, key.0)?.clone();
+    info!("Created node with id: {:?}", node.id);
+    info!("Sending acknowledges: {:?}", send_acknowledge_new_node(&network.user, client.as_ref(), &node, &network.nodes).await);
+    info!("Sending back {:?}", network.nodes.len());
     Ok(web::Json(network.nodes.clone()))
 }
 

@@ -11,7 +11,7 @@ use super::{
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Transaction {
     pub from: Option<NodeId>,
     pub to: NodeId,
@@ -19,16 +19,17 @@ pub struct Transaction {
     pub ammount: NoCoin,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AffordableTransaction(pub Transaction);
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProvenTransaction {
     pub transaction: AffordableTransaction,
-    pub proof: RSAEncodedMsg,
+    pub proof: Option<RSAEncodedMsg>,
 }
 
 impl Transaction {
+    const MINING_REWARD: NoCoin = NoCoin(10.);
     pub fn new(from: Option<NodeId>, to: NodeId, fee: NoCoin, ammount: NoCoin) -> Self {
         Self {
             from,
@@ -58,7 +59,7 @@ pub fn create_transaction(
 fn approve(transaction: AffordableTransaction, user: &User) -> Result<ProvenTransaction> {
     let serialized = serialize(&transaction.0)?;
     let proof = encode_message(&serialized, &user.priv_key)?;
-    Ok(ProvenTransaction { proof, transaction })
+    Ok(ProvenTransaction { proof: Some(proof), transaction })
 }
 
 pub fn verify_transaction(
@@ -86,7 +87,7 @@ fn prove_transaction(
     let sender = find_sender(network, transaction.0.from.as_ref().unwrap())?;
     let serialized = serialize(&transaction.0)?;
     let proof = verify_message(&serialized, proof, &sender.pub_key)?;
-    Ok(ProvenTransaction { proof, transaction })
+    Ok(ProvenTransaction { proof: Some(proof), transaction })
 }
 
 fn map_to_affordable(network: &Network, transaction: Transaction) -> Result<AffordableTransaction> {
@@ -103,10 +104,21 @@ fn map_to_affordable(network: &Network, transaction: Transaction) -> Result<Affo
                 "Sender doesn't have enough coins to complete transaction.".to_owned()
             ))
         } else {
-            Ok(AffordableTransaction(transaction))
+            if transaction.ammount != Transaction::MINING_REWARD || transaction.fee.0 != 0. {
+                Err(anyhow!("Mining reward must have ammount equal to {:?} and fee eq to 0, but was {:?}", 
+                    Transaction::MINING_REWARD, 
+                    transaction))
+            } else {
+                Ok(AffordableTransaction(transaction))
+            }
         }
     } else {
-        // mining reward, assumes it is affordable
+        // mining reward, assumes it is affordable but mining reward must be constant
         Ok(AffordableTransaction(transaction))
     }
+}
+
+pub fn create_mining_reward(miner: NodeId) -> ProvenTransaction {
+    let transaction = Transaction::new(None, miner, NoCoin(0.), Transaction::MINING_REWARD);
+    ProvenTransaction { transaction: AffordableTransaction(transaction), proof: None }
 }

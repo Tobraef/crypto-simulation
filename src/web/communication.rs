@@ -4,27 +4,24 @@ use anyhow::{anyhow, bail, Result};
 use futures::{stream::FuturesUnordered, StreamExt};
 use log::info;
 
-use crate::domain::{Blockchain, Node, PubKey, User, Transaction};
+use crate::domain::{Blockchain, Node, PubKey, Transaction, User, Block};
+
+use self::toolkit::url_for;
 
 use super::server::ROUTES;
 
 mod toolkit {
     use anyhow::Result;
     use log::info;
-    use serde::{Deserialize, de::DeserializeOwned};
-    use std::net::SocketAddr;
+    use serde::de::DeserializeOwned;
+    use std::{fmt::Debug, net::SocketAddr};
 
-    async fn get_req(url: String) -> Result<String> {
-        let response = reqwest::get(url).await?.text().await?;
-        Ok(response)
-    }
-
-    fn map_resp<T>(response: String) -> Result<T>
+    async fn get_req<T>(url: String) -> Result<T>
     where
         T: DeserializeOwned,
     {
-        let mapped = serde_json::from_str(&response)?;
-        Ok(mapped)
+        let response = reqwest::get(url).await?.json().await?;
+        Ok(response)
     }
 
     pub(super) fn url_for(addr: &SocketAddr, endpoint: &'static str) -> String {
@@ -33,14 +30,13 @@ mod toolkit {
 
     pub(super) async fn get_data<T>(addr: &SocketAddr, endpoint: &'static str) -> Result<T>
     where
-        T: DeserializeOwned,
+        T: DeserializeOwned + Debug,
     {
         info!("Reaching endpoint: {}", endpoint);
         let url = url_for(addr, endpoint);
         let response = get_req(url).await?;
-        info!("Received response: {}", response);
-        let mapped = map_resp(response)?;
-        Ok(mapped)
+        info!("Received response: {:?}", response);
+        Ok(response)
     }
 }
 
@@ -69,18 +65,18 @@ pub async fn get_bitcoin_value_usd() -> Result<f32> {
 }
 
 pub async fn send_acknowledge_new_node(
+    user: &User,
     client: &reqwest::Client,
     node: &Node,
     all_nodes: &[Node],
 ) -> Result<()> {
-    let node_json = serde_json::to_vec(node)?;
     let mut tasks: FuturesUnordered<_> = all_nodes
         .iter()
-        .filter(|n| n.id != node.id)
+        .filter(|n| n.id != node.id && n.id != user.node.id)
         .map(|n| {
             client
-                .post(toolkit::url_for(&node.addr, ROUTES.acknowledge_new_node))
-                .body(node_json.clone())
+                .post(toolkit::url_for(&n.addr, ROUTES.acknowledge_new_node))
+                .json(node)
                 .send()
         })
         .collect();
@@ -96,9 +92,15 @@ fn address_of_previous_node(addr: &SocketAddr) -> SocketAddr {
     copy
 }
 
-pub async fn register_node(addr: &SocketAddr) -> Result<Vec<Node>> {
+pub async fn register_node(client: reqwest::Client, addr: &SocketAddr, pub_key: &PubKey) -> Result<Vec<Node>> {
     let register_address = address_of_previous_node(addr);
-    toolkit::get_data(&register_address, ROUTES.register).await
+    Ok(client
+        .post(url_for(&register_address, ROUTES.register))
+        .json(pub_key)
+        .send()
+        .await?
+        .json()
+        .await?)
 }
 
 pub async fn get_chain(node: &Node) -> Result<Blockchain> {
@@ -107,6 +109,24 @@ pub async fn get_chain(node: &Node) -> Result<Blockchain> {
 
 pub async fn get_pending_transactions(node: &Node) -> Result<Vec<(Transaction, Vec<u8>)>> {
     toolkit::get_data(&node.addr, ROUTES.get_pending_transactions).await
+}
+
+pub async fn send_new_block(client: reqwest::Client, recipients: Vec<Node>, block: &Block) 
+{
+    info!("Sending block to nodes {:?}", recipients.iter().map(|x| x.addr).collect::<Vec<_>>());
+    let mut tasks: FuturesUnordered<_> = recipients.iter()
+        .map(|r| url_for(&r.addr, ROUTES.new_block))
+        .map(|url| client
+            .post(url)
+            .json(block)
+            .send())
+        .collect();
+    while let Some(r) = tasks.next().await {
+        if let Err(e) = r {
+            info!("Received error sending new block {:?}", e);
+        }
+    }
+    info!("Finished sending");
 }
 
 #[cfg(test)]

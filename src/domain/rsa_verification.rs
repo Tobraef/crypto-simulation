@@ -7,7 +7,7 @@ use rsa::{
 };
 use serde::{de::Visitor, Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct RSAEncodedMsg(Vec<u8>);
 #[derive(Debug, Clone)]
 pub struct PubKey(rsa::RsaPublicKey);
@@ -33,7 +33,21 @@ impl<'de> Visitor<'de> for KeyVisitor {
     where
         E: serde::de::Error,
     {
-        self.visit_str(&v)
+        Ok(v)
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error, 
+    {
+        Ok(v.to_owned())    
+    }
+
+    fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error, 
+    {
+        Ok(v.to_owned())    
     }
 }
 impl<'de> Deserialize<'de> for PubKey {

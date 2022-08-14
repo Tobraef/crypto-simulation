@@ -39,10 +39,16 @@ impl AddAssign for NoCoin {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct BlockIndex(pub usize);
 
+impl BlockIndex {
+    pub fn next_index(&self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
 #[derive(Copy, Clone, Deserialize, Serialize, Debug)]
 pub struct Nonce(pub u32);
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BlockHeader {
     pub index: BlockIndex,
     pub prev_hash: BlockHash,
@@ -51,10 +57,23 @@ pub struct BlockHeader {
     pub difficulty: u8,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+impl BlockHeader {
+    pub fn new(prev_block: &Block, hash: BlockHash) -> Self {
+        let difficulty = hash.0.chars().take_while(|&c| c == '0').count() as u8;
+        Self {
+            index: prev_block.header.index.next_index(),
+            prev_hash: prev_block.header.hash.clone(),
+            hash,
+            timestamp: current_timestamp(),
+            difficulty,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BlocksTransactions(pub Vec<ProvenTransaction>);
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Block {
     pub header: BlockHeader,
     pub mined_by: NodeId,
@@ -67,6 +86,16 @@ pub struct Block {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Blockchain(pub Vec<Block>);
 
+impl Blockchain {
+    pub fn last_block(&self) -> &Block {
+        self.0.last().unwrap()
+    }
+}
+
+fn current_timestamp() -> usize {
+    std::time::Instant::now().elapsed().as_secs() as usize
+}
+
 pub fn genesis_block() -> Block {
     let (hash, nonce) = try_mine_any(GENESIS_DIFFICULTY, &vec![])
         .expect("Couldn't create genesis block. Aborting.");
@@ -75,7 +104,7 @@ pub fn genesis_block() -> Block {
             index: BlockIndex(0),
             prev_hash: BlockHash::default(),
             hash,
-            timestamp: std::time::Instant::now().elapsed().as_secs() as usize,
+            timestamp: current_timestamp(),
             difficulty: GENESIS_DIFFICULTY,
         },
         mined_by: NodeId(0),
@@ -92,9 +121,9 @@ fn has_valid_genesis_block(blockchain: &Blockchain) -> Result<()> {
     if !genesis_block.transactions.0.is_empty() {
         bail!("Genesis block should have no transactions.")
     }
-    if !genesis_block.header.prev_hash.0.bytes().any(|b| b != b'0') {
+    if !genesis_block.header.prev_hash.0.chars().all(|b| b == '0') {
         bail!(
-            "Genesis block should have previous has as only zeroes. But is {:?}",
+            "Genesis block should have previous as only zeroes. But is {:?}",
             genesis_block.header.prev_hash.0
         )
     }

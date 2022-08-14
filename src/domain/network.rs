@@ -1,18 +1,18 @@
 use std::{collections::HashMap, net::SocketAddr};
 
-use anyhow::{bail, Result, anyhow};
+use anyhow::{anyhow, bail, Result};
 
 use serde::{Deserialize, Serialize};
 
 use super::{
-    blockchain::{genesis_block, verify_blockchain, Blockchain, NoCoin},
-    mining::prove_mined_block,
+    blockchain::{genesis_block, verify_blockchain, Blockchain, NoCoin, Nonce, BlocksTransactions, BlockHeader},
+    mining::{prove_mined_block, BlockHash},
     rsa_verification::{generate_key, PrivKey, PubKey},
     transaction::{verify_transaction, ProvenTransaction},
     Block, Transaction,
 };
 
-#[derive(Hash, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Hash, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeId(pub usize);
 
 impl NodeId {
@@ -32,7 +32,13 @@ pub struct Network {
     pub blockchain: Blockchain,
     pub transactions_poll: Vec<ProvenTransaction>,
     pub cache: Cache,
-    void: (),
+    _void: (),
+}
+
+impl Network {
+    pub fn other_nodes(&self) -> impl Iterator<Item=&Node> {
+        self.nodes.iter().filter(|n| n.id != self.user.node.id)
+    }
 }
 
 pub struct Cache {
@@ -81,18 +87,30 @@ pub fn try_add_transaction(
     Ok(())
 }
 
+fn remove_transactions_from_poll(poll: &mut Vec<ProvenTransaction>, transactions: &[ProvenTransaction]) -> Result<()> {
+    let removable_from_poll = transactions
+        .iter()
+        .filter(|t| poll.iter().any(|x| x.transaction.0 == t.transaction.0))
+        .collect::<Vec<_>>();
+    if removable_from_poll.len() < transactions.len() - 1 {
+        bail!("Transactions in the block (except reward) are not in the poll. Rejecting block.");
+    } else {
+        poll.retain(|t| transactions.iter().all(|x| x.transaction.0 != t.transaction.0));
+        Ok(())
+    }
+}
+
 pub fn try_add_block(network: &mut Network, block: Block) -> Result<()> {
-    let verified_block =
-        prove_mined_block(&block.transactions.0, block.header.difficulty, block.nonce)?;
+    prove_mined_block(&block.transactions.0, block.header.difficulty, block.nonce)?;
+    remove_transactions_from_poll(&mut network.transactions_poll, &block.transactions.0)?;
     network.blockchain.0.push(block);
     Ok(())
 }
 
-fn new_user(addr: SocketAddr) -> Result<User> {
-    let (priv_key, pub_key) = generate_key()?;
+fn new_user(addr: SocketAddr, priv_key: PrivKey, pub_key: PubKey) -> Result<User> {
     Ok(User {
         node: Node {
-            id: NodeId(0),
+            id: NodeId(addr.port() as usize),
             addr,
             pub_key,
         },
@@ -100,38 +118,49 @@ fn new_user(addr: SocketAddr) -> Result<User> {
     })
 }
 
-pub fn try_start_new_network(addr: SocketAddr) -> Result<Network> {
+pub fn try_start_new_network(
+    addr: SocketAddr,
+    priv_key: PrivKey,
+    pub_key: PubKey,
+) -> Result<Network> {
+    let user = new_user(addr, priv_key, pub_key)?; 
+    let node = user.node.clone();
     Ok(Network {
-        user: new_user(addr)?,
-        nodes: vec![],
+        user: user,
+        nodes: vec![node],
         blockchain: Blockchain(vec![genesis_block()]),
         transactions_poll: vec![],
         cache: Cache {
             wallet: HashMap::new(),
         },
-        void: (),
+        _void: (),
     })
 }
 
 pub fn try_adopt_network(
     addr: SocketAddr,
+    priv_key: PrivKey,
+    pub_key: PubKey,
     nodes: Vec<Node>,
     chain: Blockchain,
 ) -> Result<Network> {
     let chain = verify_blockchain(chain)?;
     Ok(Network {
-        user: new_user(addr)?,
+        user: new_user(addr, priv_key, pub_key)?,
         nodes,
         blockchain: chain,
         transactions_poll: vec![],
         cache: Cache {
             wallet: HashMap::new(),
         },
-        void: (),
+        _void: (),
     })
 }
 
-pub fn try_adopt_pending_transactions(network: &mut Network, transactions: Vec<(Transaction, Vec<u8>)>) -> Result<()> {
+pub fn try_adopt_pending_transactions(
+    network: &mut Network,
+    transactions: Vec<(Transaction, Vec<u8>)>,
+) -> Result<()> {
     let verification_results: Vec<_> = transactions
         .into_iter()
         .map(|(transaction, proof)| verify_transaction(network, transaction, proof))
@@ -149,5 +178,14 @@ pub fn try_adopt_pending_transactions(network: &mut Network, transactions: Vec<(
             .collect();
         network.transactions_poll = verified_transactions;
         Ok(())
+    }
+}
+
+pub fn create_mined_block(prev_block: &Block, hash: BlockHash, nonce: Nonce, transactions: &[&ProvenTransaction], miner: NodeId) -> Block {
+    Block {
+        header: BlockHeader::new(prev_block, hash),
+        mined_by: miner,
+        transactions: BlocksTransactions(transactions.iter().map(|&x| x.clone()).collect()),
+        nonce,
     }
 }

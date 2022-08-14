@@ -1,22 +1,18 @@
-use std::iter::once;
-
 use futures::{stream::FuturesUnordered, StreamExt};
 
 use anyhow::{bail, Result};
-use log::debug;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    blockchain::{BlockHeader, BlocksTransactions, Nonce, MAX_TRANSACTION_COUNT},
-    network::NodeId,
+    blockchain::{Nonce, MAX_TRANSACTION_COUNT},
     serialization::serialize,
-    transaction::ProvenTransaction,
+    transaction::{ProvenTransaction}, network::NodeId,
 };
 
 const HASH_LEN: usize = 64;
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
 pub struct BlockHash(pub String);
 
 impl Default for BlockHash {
@@ -35,24 +31,30 @@ impl BlockHash {
     }
 }
 
-pub async fn try_mine_any_async(
+pub async fn try_mine_any_async<'a>(
     difficulty: u8,
-    transactions: &Vec<ProvenTransaction>,
-) -> Result<(BlockHash, Nonce)> {
+    transactions: &'a Vec<ProvenTransaction>,
+    mining_reward: &'a ProvenTransaction,
+    miner_id: NodeId,
+) -> Result<(BlockHash, Nonce, Vec<&'a ProvenTransaction>)> {
     let mut split_pull: Vec<Vec<&ProvenTransaction>> =
         Vec::with_capacity(transactions.len() / MAX_TRANSACTION_COUNT);
-    for i in (0..transactions.len()).step_by(10) {
+    for i in (0..transactions.len()).step_by(9) {
         split_pull.push(
             transactions
                 .iter()
                 .skip(i)
-                .take(MAX_TRANSACTION_COUNT)
+                .take(MAX_TRANSACTION_COUNT - 1)
+                .chain(std::iter::once(mining_reward))
                 .collect(),
         );
     }
+    if split_pull.is_empty() {
+        split_pull.push(vec![&mining_reward]);
+    }
     let mut tasks: FuturesUnordered<_> = split_pull
         .into_iter()
-        .map(|ts| mine_async(ts, difficulty))
+        .map(|ts| async { mine_async(&ts, difficulty).await.map(|x| (x.0, x.1, ts)) })
         .collect();
     if let Some(Ok(nonce)) = tasks.next().await {
         Ok(nonce)
@@ -78,10 +80,11 @@ pub fn try_mine_any(
 }
 
 async fn mine_async(
-    transactions: Vec<&ProvenTransaction>,
+    transactions: &Vec<&ProvenTransaction>,
     difficulty: u8,
 ) -> Result<(BlockHash, Nonce)> {
-    let block_data = serialize(&transactions)?;
+    log::info!("Attempt to mine {:?} with difficulty {:?}", transactions, difficulty);
+    let block_data = serialize(transactions)?;
     tokio::task::spawn(async move {
         (0..u32::MAX)
             .map(|n| (Nonce(n), hash_block(&block_data, Nonce(n))))
@@ -115,7 +118,11 @@ pub fn prove_mined_block(
     if hash_matches(&hash, difficulty) {
         Ok(())
     } else {
-        bail!("Block is not valid")
+        bail!("Block hash doesn't match: hashed transactions {:?} yielded hash {:?} which doesn't satisfy difficulty of {:?}",
+            transactions,
+            hash,
+            difficulty,
+        )
     }
 }
 
@@ -131,7 +138,8 @@ mod tests {
     use rand::{Rng, SeedableRng};
 
     use crate::domain::{
-        blockchain::NoCoin,
+        blockchain::{BlocksTransactions, NoCoin},
+        network::NodeId,
         rsa_verification::{encode_message, generate_key},
         transaction::{AffordableTransaction, Transaction},
     };
@@ -148,7 +156,7 @@ mod tests {
         let mut rng = rand::prelude::StdRng::from_seed(seed);
         (0..rng.gen_range(1..=10))
             .map(|_| ProvenTransaction {
-                proof: encode_message(&vec![rng.gen(), rng.gen()], &key.0).unwrap(),
+                proof: Some(encode_message(&vec![rng.gen(), rng.gen()], &key.0).unwrap()),
                 transaction: AffordableTransaction(Transaction::new(
                     Some(NodeId(rng.gen())),
                     NodeId(rng.gen()),
@@ -164,7 +172,7 @@ mod tests {
         let transactions = BlocksTransactions(some_transactions());
 
         for dif in 1..4 {
-            let (_, nonce) = mine_async(transactions.0.iter().collect(), dif as u8)
+            let (_, nonce) = mine_async(&transactions.0.iter().collect(), dif as u8)
                 .await
                 .unwrap();
 
@@ -187,7 +195,7 @@ mod tests {
         let transactions = some_transactions();
         let difficulty = 3;
 
-        let (_, nonce) = mine_async(transactions.iter().collect(), difficulty)
+        let (_, nonce) = mine_async(&transactions.iter().collect(), difficulty)
             .await
             .unwrap();
         let proof = prove_mined_block(&transactions, difficulty, nonce);
